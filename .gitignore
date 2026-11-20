@@ -1,0 +1,9 @@
+# Data is shared through the team folder, never committed
+data/
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# Secrets
+.env
