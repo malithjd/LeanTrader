@@ -1,9 +1,6 @@
 # LeanTrader
 Cost efficient and faster framework for Market Research and Stock Recommendation
 
-Fordham Deep Learning final project, Group 6. The product spec is the source of truth:
-https://claude.ai/artifact/8hYeY46idxvC2Ls3ipPGLe
-
 ## Setup
 
 Python 3.11 or newer.
