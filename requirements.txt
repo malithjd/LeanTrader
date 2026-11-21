@@ -1,5 +1,7 @@
-# Python 3.11 or newer
+# Python 3.11 or newer (CI tests 3.11, 3.12, 3.13, 3.14)
 pandas>=2.2
 numpy>=1.26
-exchange_calendars>=4.5
+# 4.13+ so everyone has the same NYSE calendar. Older versions miss
+# special closures such as Jan 9, 2025 and would shift decision dates.
+exchange_calendars>=4.13
 pytest>=8.0
