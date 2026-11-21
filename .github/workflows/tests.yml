@@ -1,0 +1,44 @@
+name: Tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pytest:
+    name: pytest (Python ${{ matrix.python }}${{ matrix.oldest && ', oldest deps' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        oldest: [false]
+        include:
+          # Extra run with the oldest versions requirements.txt allows,
+          # to catch a teammate on an older pandas or calendar.
+          - python: "3.11"
+            oldest: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install newest allowed versions
+        if: ${{ !matrix.oldest }}
+        run: pip install -r requirements.txt
+      - name: Install oldest allowed versions
+        if: ${{ matrix.oldest }}
+        run: |
+          pip install uv
+          uv pip install --system --resolution lowest-direct -r requirements.txt
+      - run: python -m pytest -q
+
+  # One stable check name for the branch rule: passes only if every run above passed.
+  tests-pass:
+    name: tests-pass
+    if: always()
+    needs: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.pytest.result }}" = "success"
