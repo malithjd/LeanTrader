@@ -1,0 +1,7 @@
+# GPU and language-model packages (FinBERT, Llama 3.2 3B, benchmarks).
+# Install on top of the core set:  pip install -r requirements.txt -r requirements-ml.txt
+# CI doesn't install these. Every line needs a minimum version: package>=X.Y (pip show <package>).
+# Floors below are compatible minimums, not versions anyone pinned. Raise them to
+# Bereket's versions (pip show torch transformers) once confirmed.
+torch>=2.0
+transformers>=4.40

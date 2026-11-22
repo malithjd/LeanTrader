@@ -22,6 +22,8 @@ Usage:
     python sec_edgar.py --email you@fordham.edu                         # all 100 tickers
     python sec_edgar.py --email you@fordham.edu --tickers AAPL MSFT KO  # quick sample first
     python sec_edgar.py --email you@fordham.edu --refresh               # re-download latest filings
+
+    pytest tests/test_sec.py  # run the unit tests, which check the dating logic and column shapes
 """
 
 from __future__ import annotations

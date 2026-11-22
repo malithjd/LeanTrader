@@ -5,3 +5,4 @@ numpy>=1.26
 # special closures such as Jan 9, 2025 and would shift decision dates.
 exchange_calendars>=4.13
 pytest>=8.0
+yfinance>=1.8
