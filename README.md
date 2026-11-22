@@ -9,8 +9,13 @@ Python 3.11 or newer.
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-ml.txt # only if you run model scripts (FinBERT, Llama)
 pytest                             # should pass before you start
 ```
+
+**Adding a package?** Put it in `requirements.txt` (core) or `requirements-ml.txt` (GPU/model)
+with a minimum version, `package>=X.Y`, where X.Y comes from `pip show <package>`.
+A test blocks the merge if you forget, and Claude's review flags it (rule in `CLAUDE.md`).
 
 ## Shared pieces (use these, don't rewrite them)
 
