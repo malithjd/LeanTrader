@@ -1,14 +1,18 @@
 """tests/test_news.py -- spec 'Done means' checks for news_clean.csv and news_coverage.csv.
 Run from the repo root:  pytest tests/test_news.py -q
+
+Skipped until data/interim/news_clean.csv exists on the machine running the tests
+(build it with `python news.py build`); the data is shared via the team folder, not committed.
 """
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-NEWS = Path("data/interim/news_clean.csv")
-COVERAGE = Path("data/interim/news_coverage.csv")
-UNIVERSE = Path("configs/universe.csv")
+ROOT = Path(__file__).resolve().parent.parent
+NEWS = ROOT / "data/interim/news_clean.csv"
+COVERAGE = ROOT / "data/interim/news_coverage.csv"
+UNIVERSE = ROOT / "configs/universe.csv"
 
 COLUMNS = [
     "news_id", "ticker", "company", "published_utc", "updated_utc",
@@ -20,6 +24,8 @@ ISO_Z = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
 
 @pytest.fixture(scope="module")
 def news():
+    if not NEWS.exists():
+        pytest.skip(f"{NEWS.relative_to(ROOT)} not present yet")
     return pd.read_csv(NEWS, dtype={"ticker": str, "summary": str, "author": str},
                        keep_default_na=False)
 
@@ -98,6 +104,8 @@ def test_failing_rows_are_kept_not_dropped(news):
 
 
 def test_coverage_file(news):
+    if not COVERAGE.exists():
+        pytest.skip(f"{COVERAGE.relative_to(ROOT)} not present yet")
     cov = pd.read_csv(COVERAGE)
     assert list(cov.columns) == ["ticker", "year", "n_articles", "n_kept"]
     assert cov["n_articles"].sum() == len(news)
