@@ -6,3 +6,5 @@ numpy>=1.26
 exchange_calendars>=4.13
 pytest>=8.0
 yfinance>=1.8
+requests>=2.34
+python-dotenv>=1.2
