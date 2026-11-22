@@ -5,3 +5,5 @@
 # Bereket's versions (pip show torch transformers) once confirmed.
 torch>=2.0
 transformers>=4.40
+# FNSPID news download (python news.py pull-fnspid)
+huggingface-hub>=2.4

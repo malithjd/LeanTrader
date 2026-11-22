@@ -17,6 +17,9 @@ Commands (run from the repo root, next to dating.py and configs/):
   python news.py build                     # all caches -> data/interim/news_clean.csv + news_coverage.csv
 
 Every pull is cached under data/raw/<source>/ and skipped next time, so nothing is downloaded twice.
+
+API keys: copy .env.example to .env and fill in your own keys (.env is gitignored).
+Keys already exported in the shell win over the .env file.
 """
 
 import argparse
@@ -32,6 +35,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------- settings
 UNIVERSE_CSV = Path("configs/universe.csv")
@@ -210,7 +214,7 @@ def pull_alpaca_ticker(session, ticker, end, throttle):
 def cmd_pull_alpaca(args):
     key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
     if not key or not secret:
-        sys.exit("Set APCA_API_KEY_ID and APCA_API_SECRET_KEY first.")
+        sys.exit("Set APCA_API_KEY_ID and APCA_API_SECRET_KEY first (in .env, see .env.example).")
     ALPACA_DIR.mkdir(parents=True, exist_ok=True)
     s = requests.Session()
     s.headers.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
@@ -247,7 +251,7 @@ def pull_massive_ticker(session, ticker, start, end, key, throttle):
 def cmd_pull_massive(args):
     key = os.environ.get("MASSIVE_API_KEY")
     if not key:
-        sys.exit("Set MASSIVE_API_KEY first.")
+        sys.exit("Set MASSIVE_API_KEY first (in .env, see .env.example).")
     MASSIVE_DIR.mkdir(parents=True, exist_ok=True)
     now = pd.Timestamp.now(tz="UTC")
     start = (now - pd.Timedelta(days=MASSIVE_DAYS_BACK)).strftime("%Y-%m-%dT00:00:00Z")
@@ -512,6 +516,7 @@ def cmd_build(args):
 
 # ---------------------------------------------------------------- main
 if __name__ == "__main__":
+    load_dotenv()  # reads .env from the repo root; never overrides keys already in the shell
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("pull-alpaca", "pull-massive"):

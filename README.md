@@ -53,6 +53,41 @@ data/interim/   our output CSVs (gitignored; share through the team folder)
 tests/          one test file per table
 ```
 
+## News (Nati)
+
+`news.py` pulls news from three sources and merges them. Each pull is cached under
+`data/raw/<source>/`, so a rerun skips what you already have.
+
+| Source  | Dates                          | Needs                           |
+|---------|--------------------------------|---------------------------------|
+| FNSPID  | 2018-01-01 to 2023-12-31       | nothing (public Hugging Face dataset), `pip install -r requirements-ml.txt` |
+| Massive | about the last 2 years         | `MASSIVE_API_KEY`               |
+| Alpaca  | recent news (~Apr 2026 onward) | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
+
+No free source covers 2024-01-01 to about Nov 2024.
+
+**API keys.** Copy the template and fill in your own keys. `.env` is gitignored, so never commit it.
+
+```bash
+cp .env.example .env
+```
+
+- Massive: sign up at [massive.com](https://massive.com); the free plan's key works.
+- Alpaca: sign up at [alpaca.markets](https://alpaca.markets), then Dashboard → API Keys
+  (paper-trading keys work for news).
+
+`news.py` reads `.env` when it starts. Keys you export in the shell take priority.
+
+```bash
+python news.py pull-fnspid                       # Benzinga file, to Jun 2020 (5.7 GB download)
+python news.py pull-fnspid --file nasdaq-lite    # Nasdaq file, to 2023 (1.8 GB)
+python news.py pull-massive                      # add --tickers AAPL,MSFT to pull a few
+python news.py pull-alpaca
+python news.py build                             # -> data/interim/news_clean.csv, news_coverage.csv
+```
+
+You only need keys if you pull news yourself. The finished CSVs are shared through the team folder.
+
 ## Building the universe (MJ, once)
 
 ```bash
