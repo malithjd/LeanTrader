@@ -1,7 +1,6 @@
 # LeanTrader
 Cost efficient and faster framework for Market Research and Stock Recommendation
 
-
 ## Setup
 
 Python 3.11 or newer.
