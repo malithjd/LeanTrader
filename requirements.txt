@@ -8,3 +8,5 @@ pytest>=8.0
 yfinance>=1.8
 requests>=2.34
 python-dotenv>=1.2
+# Rankers (rank_lgbm.py). The GRU's torch is in requirements-ml.txt.
+lightgbm>=4.7
