@@ -1,4 +1,5 @@
 """Does news help? Change in Rank IC of each news variant vs the baseline, same ranker.
+Also: LSTM vs GRU on the baseline features (does the recurrent cell matter?).
 
 Owner: MJ. Spec: "Evals -> Ranking": change vs factors-only with a 95% block-bootstrap
 interval (20-day blocks).
@@ -21,9 +22,18 @@ from metrics import daily_ic, ic_diff_ci
 from walkforward import RESULTS
 
 
+def _ic(stage: str, model: str, variant: str) -> pd.Series | None:
+    path = RESULTS / f"preds_{stage}_{model}_{variant}.csv"
+    return daily_ic(pd.read_csv(path)) if path.exists() else None
+
+
 def compare(stage: str) -> pd.DataFrame:
     rows = []
-    for model in ["lgbm", "gru"]:
+    # Architecture check: LSTM vs GRU, same features and setup (baseline variant).
+    lstm, gru = _ic(stage, "lstm", "base"), _ic(stage, "gru", "base")
+    if lstm is not None and gru is not None:
+        rows.append({"model": "lstm", "variant": "base", "vs": "gru base", **ic_diff_ci(lstm, gru)})
+    for model in ["lgbm", "gru", "lstm"]:
         base_path = RESULTS / f"preds_{stage}_{model}_base.csv"
         if not base_path.exists():
             continue

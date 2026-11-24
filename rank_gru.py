@@ -1,10 +1,11 @@
-"""GRU ranker: reads each stock's last 60 trading days of features.
+"""GRU ranker (and LSTM for comparison): reads each stock's last 60 trading days of features.
 
 Owner: MJ. Spec: product spec, "Rankers and trading" (GRU over a 60-day window, same
-walk-forward setup as LightGBM).
+walk-forward setup as LightGBM). --cell lstm swaps the GRU for an LSTM with everything
+else identical (features, loss, folds, seeds, grid), so the two differ only in the cell.
 
 Model
-    GRU(features -> hidden) over the 60-day window, last hidden state -> linear -> score.
+    GRU or LSTM (features -> hidden) over the 60-day window, last hidden state -> linear -> score.
     Loss: per day, minus the Pearson correlation between the scores and the day's centered
     target rank (a smooth stand-in for Rank IC). A batch is several days of 100 stocks.
     Features are clipped at the training 1st/99th percentiles and z-scored with training
@@ -15,10 +16,11 @@ Training per fold
     The last INNER_VAL_DAYS of the fold's training dates (after a 6-day purge) pick the
     epoch (early stopping); the score is the mean over SEEDS runs. A small grid on the
     validation years picks hidden size and learning rate, saved to
-    data/results/configs/gru_{variant}.json.
+    data/results/configs/{gru|lstm}_{variant}.json.
 
 Usage (same flags as rank_lgbm.py):
     python rank_gru.py [--news-model finbert] [--drop-covid] [--test]
+    python rank_gru.py --cell lstm          # LSTM comparison, same setup
 """
 
 from __future__ import annotations
@@ -58,15 +60,25 @@ def device() -> torch.device:
     return torch.device("cpu")
 
 
-class GRURanker(nn.Module):
-    def __init__(self, n_features: int, hidden: int):
+CELLS = {"gru": nn.GRU, "lstm": nn.LSTM}
+
+
+class RNNRanker(nn.Module):
+    """One recurrent layer (GRU or LSTM) over the window; its last hidden state -> score."""
+
+    def __init__(self, n_features: int, hidden: int, cell: str = "gru"):
         super().__init__()
-        self.gru = nn.GRU(n_features, hidden, batch_first=True)
+        self.cell = cell
+        self.rnn = CELLS[cell](n_features, hidden, batch_first=True)
         self.head = nn.Sequential(nn.Dropout(DROPOUT), nn.Linear(hidden, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: [batch, WINDOW, F]
-        _, h = self.gru(x)
+        _, state = self.rnn(x)
+        h = state[0] if self.cell == "lstm" else state  # LSTM returns (h, c)
         return self.head(h[-1]).squeeze(-1)
+
+
+GRURanker = RNNRanker  # old name
 
 
 class Panel:
@@ -154,7 +166,7 @@ def _predict(model, panel, day_idx, dev, need_label=False) -> pd.DataFrame:
 def train_one(panel, train_days, val_days, val_labels, cfg, seed, dev):
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
-    model = GRURanker(panel.X.shape[2], cfg["hidden"]).to(dev)
+    model = RNNRanker(panel.X.shape[2], cfg["hidden"], cfg.get("cell", "gru")).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=WEIGHT_DECAY)
     best, best_state, bad = -np.inf, None, 0
     for _ in range(MAX_EPOCHS):
@@ -220,23 +232,25 @@ def main() -> None:
     ap.add_argument("--drop-covid", action="store_true")
     ap.add_argument("--test", action="store_true")
     ap.add_argument("--skip-gate", action="store_true")
+    ap.add_argument("--cell", choices=list(CELLS), default=MODEL, help="gru (main) or lstm (comparison)")
     args = ap.parse_args()
 
     if not args.skip_gate:
         run_gate()
+    name = args.cell
     variant = variant_name(args.news_model)
     feats = feature_cols(args.news_model)
     table = load_table(args.news_model)
     panel = Panel(table, feats)
     dev = device()
     run = "nocovid" if args.drop_covid else "main"
-    cfg_path = RESULTS / "configs" / f"{MODEL}_{variant}.json"
-    print(f"{MODEL} {variant} run={run} on {dev}: {len(panel.dates)} days x {len(panel.tickers)} stocks x {len(feats)} features")
+    cfg_path = RESULTS / "configs" / f"{name}_{variant}.json"
+    print(f"{name} {variant} run={run} on {dev}: {len(panel.dates)} days x {len(panel.tickers)} stocks x {len(feats)} features")
 
     if args.test or args.drop_covid:
         if not cfg_path.exists():
-            raise SystemExit(f"{cfg_path} not found: tune first (python rank_gru.py)")
-        cfg = json.loads(cfg_path.read_text())
+            raise SystemExit(f"{cfg_path} not found: tune first (python rank_gru.py --cell {name})")
+        cfg = {**json.loads(cfg_path.read_text()), "cell": name}
         years, allow = (TEST_YEARS, True) if args.test else (VAL_YEARS, False)
         preds = run_folds(panel, table, make_folds(table["date"], years, args.drop_covid, allow), cfg, dev)
         stage = "test" if args.test else "val"
@@ -244,7 +258,7 @@ def main() -> None:
         folds = make_folds(table["date"], VAL_YEARS)
         rows, best = [], None
         for values in itertools.product(*GRID.values()):
-            cfg = dict(zip(GRID, values))
+            cfg = {**dict(zip(GRID, values)), "cell": name}
             t0 = time.time()
             preds = run_folds(panel, table, folds, cfg, dev)
             per = [float(daily_ic(g).mean()) for _, g in preds.groupby("fold")]
@@ -256,12 +270,12 @@ def main() -> None:
                 best = (score, cfg, preds)
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).sort_values("mean_fold_ic", ascending=False).to_csv(
-            RESULTS / f"tuning_{MODEL}_{variant}.csv", index=False)
+            RESULTS / f"tuning_{name}_{variant}.csv", index=False)
         cfg_path.write_text(json.dumps(best[1], indent=2))
         print(f"Best config: {best[1]} (mean fold IC {best[0]:+.4f})")
         preds, stage = best[2], "val"
 
-    out = evaluate_and_save(preds, stage, MODEL, variant, run)
+    out = evaluate_and_save(preds, stage, name, variant, run)
     print(out["ic"].round(4).to_string(index=False))
     print(out["portfolio"].round(4).to_string(index=False))
 
