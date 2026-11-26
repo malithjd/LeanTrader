@@ -10,3 +10,5 @@ requests>=2.34
 python-dotenv>=1.2
 # Rankers (rank_lgbm.py). The GRU's torch is in requirements-ml.txt.
 lightgbm>=4.7
+# Gemini API client for the teacher labels (python teacher.py label)
+google-genai>=3.6
