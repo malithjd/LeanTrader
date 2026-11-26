@@ -28,6 +28,7 @@ IMPORT_TO_PIP = {
     "cv2": "opencv-python",
     "dotenv": "python-dotenv",
     "huggingface_hub": "huggingface-hub",
+    "google": "google-genai",  # `from google import genai`
 }
 ML_PACKAGES = {"torch", "transformers", "peft", "bitsandbytes", "accelerate", "datasets", "vllm",
                "trl", "safetensors", "sentencepiece", "tokenizers", "huggingface-hub"}
