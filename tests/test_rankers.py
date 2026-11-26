@@ -173,15 +173,18 @@ rank_gru.SEEDS, rank_gru.MAX_EPOCHS = [0], 3
 t = _toy_table()
 p = rank_gru.Panel(t, ["f1", "f2"])
 fold = make_folds(t["date"], [2022])[0]
-pred = rank_gru.fit_predict(p, t, fold, {"hidden": 8, "lr": 3e-3}, torch.device("cpu"))
-assert pred["score"].notna().mean() > 0.9, pred["score"].notna().mean()
-ic = daily_ic(pred).mean()
-assert ic > 0.1, ic
+for cell in ["gru", "lstm"]:
+    pred = rank_gru.fit_predict(p, t, fold, {"hidden": 8, "lr": 3e-3, "cell": cell}, torch.device("cpu"))
+    assert pred["score"].notna().mean() > 0.9, (cell, pred["score"].notna().mean())
+    ic = daily_ic(pred).mean()
+    assert ic > 0.1, (cell, ic)
 """
 
 
 def test_gru_learns_a_planted_signal():
-    """Runs in its own process: on macOS, torch and lightgbm ship clashing OpenMP runtimes
+    """GRU and LSTM both learn a planted signal.
+
+    Runs in its own process: on macOS, torch and lightgbm ship clashing OpenMP runtimes
     and torch aborts if lightgbm was imported first (the rankers run as separate scripts)."""
     import importlib.util
     import subprocess

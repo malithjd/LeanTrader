@@ -1,6 +1,17 @@
 # LeanTrader
 Cost efficient and faster framework for Market Research and Stock Recommendation
 
+## Architecture
+
+![LeanTrader architecture: news, SEC filings and prices become one daily feature table; a ranker (LightGBM, GRU, LSTM comparison) orders the 100 stocks and a rule-based portfolio trades the top 10](docs/leantrader-architecture.png)
+
+A fine-tuned Llama 3.2 3B reads the news. Plain code turns SEC filings and prices into features.
+LightGBM (main), a GRU over a 60-day window and an LSTM (comparison) rank the stocks, and fixed rules
+make the trade. Offline, a Gemini Flash teacher labels news once to fine-tune the 3B model.
+
+To edit the diagram, open `docs/leantrader-architecture.excalidraw` in [excalidraw.com](https://excalidraw.com),
+then export it over `docs/leantrader-architecture.png`.
+
 ## Setup
 
 Python 3.11 or newer.
@@ -48,6 +59,7 @@ are refused on purpose.
 
 ```
 configs/        universe.csv (committed)
+docs/           architecture diagram (.excalidraw source + .png for the README)
 data/raw/       raw API responses, one folder per source (gitignored)
 data/interim/   our output CSVs (gitignored; share through the team folder)
 tests/          one test file per table

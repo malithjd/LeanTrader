@@ -6,8 +6,9 @@ Steps
     1. news_daily.py (Nati), if it exists and news_scores.csv exists: scores -> stock-day features
     2. merge.py: rebuild model_table.csv
     3. Leakage gate (tests/test_model_table.py); stops here if it fails
-    4. rank_lgbm.py and rank_gru.py: baseline, then one variant per news model found in
-       news_daily.csv (tuned on 2022-2024; --test uses the saved configs instead)
+    4. rank_lgbm.py, rank_gru.py (GRU) and rank_gru.py --cell lstm (LSTM comparison):
+       baseline, then one variant per news model found in news_daily.csv
+       (tuned on 2022-2024; --test uses the saved configs instead)
     5. --drop-covid: also the robustness run for every variant
     6. compare.py: news vs baseline Rank IC with 95% intervals
 
@@ -45,7 +46,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--test", action="store_true")
     ap.add_argument("--drop-covid", action="store_true")
-    ap.add_argument("--skip-gru", action="store_true")
+    ap.add_argument("--skip-gru", action="store_true", help="skip both recurrent rankers")
+    ap.add_argument("--skip-lstm", action="store_true", help="skip the LSTM comparison only")
     ap.add_argument("--skip-news-daily", action="store_true")
     args = ap.parse_args()
 
@@ -56,14 +58,18 @@ def main() -> None:
 
     models = news_models()
     print(f"News models in news_daily.csv: {models or 'none (baseline only)'}")
-    rankers = ["rank_lgbm.py"] + ([] if args.skip_gru else ["rank_gru.py"])
+    rankers = [["rank_lgbm.py"]]
+    if not args.skip_gru:
+        rankers.append(["rank_gru.py", "--cell", "gru"])
+        if not args.skip_lstm:
+            rankers.append(["rank_gru.py", "--cell", "lstm"])
     extra = ["--test"] if args.test else []
     for script in rankers:
         for m in [None, *models]:
             news = ["--news-model", m] if m else []
-            sh(script, "--skip-gate", *news, *extra)
+            sh(*script, "--skip-gate", *news, *extra)
             if args.drop_covid:
-                sh(script, "--skip-gate", "--drop-covid", *news, *extra)
+                sh(*script, "--skip-gate", "--drop-covid", *news, *extra)
     sh("compare.py", *extra)
 
 
