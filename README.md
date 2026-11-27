@@ -130,6 +130,34 @@ flags are recomputed with the same rules as every other source.
 - **We didn't use the backfill's own full `news_clean.csv`.** It deleted 8,182 existing rows,
   54 of them kept, and changed `keep` on 6 more. The spec says never drop rows.
 
+**Nexis Uni (`source = NexisUni`, added Nov 27 by MJ).** English news bulk-downloaded from
+Nexis Uni through Fordham fills thin ticker-months. The download plan, by priority, is in
+`NexisUni/plan/` next to the repo: `nexis_download_brief.md` and `nexis_download_plan.csv`.
+`nexis_import.py` turns the DOCX exports into a batch, and `add-external` merges it:
+
+```bash
+python nexis_import.py --batch nexisuni_batch02 --plan ../NexisUni/plan/nexis_download_plan.csv \
+    LIN="../NexisUni/Files (500).DOCX" DUK="../NexisUni/Files (149)"
+python news.py add-external
+```
+
+- **What's kept.** Only English news about the company passes. Press releases and
+  regulatory/government feeds are dropped, as are machine-written holdings pages (MarketBeat-type
+  sites) and other entities with the same name (Linde India, cricketer George Linde, ...). The
+  company must be in the headline or lead, the date must fall in the plan's ranges, and repeat
+  copies are skipped.
+- **What's stored.** Only the headline and a lead of at most 500 characters, never the full
+  text. The `url` is the Nexis document link.
+- **Timestamps.** The article's own date line is used, with the zone's standard offset (never
+  earlier than the truth). Date-only items and "12:00 AM" stamps count from the next trading day.
+- **Audit log.** `data/raw/external/provenance/<batch>_meta.csv` records every downloaded article
+  as kept or excluded, with the reason.
+- **Batch 1** (LIN and DUK, P1 window): 949 downloaded articles, 85 kept (59 LIN, 26 DUK).
+  Exclusions: 460 press releases or government feeds, 174 holdings-site pages, 169 duplicates
+  across the four export files, 21 not about the company in the headline or lead, 28 sport or
+  politics items, 6 other entities, and a few others. Kept LIN articles went from 11 to 26 in
+  2025, and DUK from 5 to 12.
+
 **API keys.** Copy the template and fill in your own keys. `.env` is gitignored, so never commit it.
 
 ```bash

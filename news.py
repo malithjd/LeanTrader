@@ -19,6 +19,8 @@ External gap-fill (any source other than fnspid / massive / alpaca):
   news_id is re-derived from the URL with id_from_url, and filters are rerun here.
   data/raw/external/provenance/ holds the audit files (publisher, date evidence, method).
   Most new rows are headlines only (summary empty). Existing rows are never dropped or edited.
+  nexisuni_batch*.csv (source = NexisUni) = English news from Nexis Uni (Fordham), built by
+  nexis_import.py from Nexis DOCX exports; headline + a lead of at most 500 characters.
 
 Commands (run from the repo root, next to dating.py and configs/):
   python news.py pull-fnspid               # Benzinga file All_external.csv (5.7 GB), keep our rows
