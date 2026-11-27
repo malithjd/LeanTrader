@@ -7,16 +7,18 @@ Which source covers which dates (the team agreed to mix sources):
   (gap)    2024-01-01 .. ~Nov 2024     no free source reaches this
   Massive  ~Nov 2024   .. day before the first Alpaca article   (free plan: ~2 years back)
   Alpaca   first Alpaca article (~Apr 29 2026) .. now           (free plan: recent news only)
-  External 2018 .. Oct 2024, gap ticker-years only   (added by MJ, Nov 27 2026; see below)
+  External 2018 .. Oct 2024, gap ticker-years mostly  (added by MJ, Nov 27 2026; see below)
 
-External gap-fill (source = "external"):
-  data/raw/external/added_articles.csv holds 454 articles found by hand-run scripts in public
-  publisher archives, sitemaps and RSS feeds (no news API, no Nexis) for the 179 ticker-years
-  that had fewer than 10 articles. Every published_utc comes from the publisher's own
-  timestamp (page metadata, a dateline with time zone, RSS, or a newswire record); the extra
-  columns (publisher, time_status, date_evidence, method) stay in that file for audit.
-  Headlines only: summary is empty. It goes through the same relevance, de-dup and daily-cap
-  rules as every other source, and loses to them when the same (news_id, ticker) appears twice.
+External gap-fill (any source other than fnspid / massive / alpaca):
+  data/raw/external/*.csv brings the 179 ticker-years (2018 .. Oct 2024) that had fewer than
+  10 articles up to at least 10 kept each. addon_cumulative_delta.csv = the 8,333 rows an
+  external backfill added: public datasets (drinkall_yahoo, dolphin_polygon,
+  finmultitime_nasdaq, investopedia) plus publisher pages found in public archives, sitemaps
+  and RSS (public_<publisher>, issuer_release). Its source names are kept as given. Timestamps
+  are the publisher's or dataset's own UTC times; date-only records were left out.
+  news_id is re-derived from the URL with id_from_url, and filters are rerun here.
+  data/raw/external/provenance/ holds the audit files (publisher, date evidence, method).
+  Most new rows are headlines only (summary empty). Existing rows are never dropped or edited.
 
 Commands (run from the repo root, next to dating.py and configs/):
   python news.py pull-fnspid               # Benzinga file All_external.csv (5.7 GB), keep our rows
@@ -53,7 +55,7 @@ from dotenv import load_dotenv
 UNIVERSE_CSV = Path("configs/universe.csv")
 RAW = Path("data/raw")
 ALPACA_DIR, MASSIVE_DIR, FNSPID_DIR = RAW / "alpaca", RAW / "massive", RAW / "fnspid"
-EXTERNAL_CSV = RAW / "external" / "added_articles.csv"   # hand-sourced gap-fill, see docstring
+EXTERNAL_DIR = RAW / "external"   # hand-sourced / backfilled gap-fill CSVs, see docstring
 # FNSPID ships two news files. All_external = Benzinga headlines, which END IN JUNE 2020.
 # The Nasdaq file covers to 2023. "nasdaq-lite" is a community JSONL copy (1.8 GB) of the
 # 23 GB Nasdaq CSV; try it first, and fall back to "nasdaq" if it lacks the columns.
@@ -443,12 +445,56 @@ EXTERNAL_COLS = ["ticker", "range_start", "range_end", "title", "publisher",
                  "published_utc", "time_status", "url", "author", "news_id"]
 
 
-def read_external(path: Path = EXTERNAL_CSV) -> pd.DataFrame:
-    """Hand-sourced gap-fill articles. Checked hard on the way in, because nothing else
-    re-derives these fields: each row must carry a UTC timestamp ending in Z, fall inside the
-    ticker-year range it was sourced for, and have the news_id our own id rule gives its URL."""
-    if not path.exists():
+CORE_SOURCES = ("alpaca", "massive", "fnspid")   # every other source value is external gap-fill
+ISO_Z_RE = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
+
+
+def is_external(source: pd.Series) -> pd.Series:
+    return ~source.isin(CORE_SOURCES)
+
+
+def read_external(folder: Path = EXTERNAL_DIR) -> pd.DataFrame:
+    """Every CSV directly in data/raw/external/ (sub-folders hold audit files only). Two layouts:
+    the hand-sourced article list (range_start/range_end/publisher...) or rows already in the
+    news_clean.csv layout. Only text, URL, timestamp and ticker are trusted: news_id is re-derived
+    from the URL with our own id rule, and in_title / dup_group / keep / decision_date are rerun."""
+    files = sorted(folder.glob("*.csv")) if folder.exists() else []
+    parts = [read_external_clean(p) if "dup_group" in pd.read_csv(p, nrows=0).columns
+             else read_external_articles(p) for p in files]
+    if not parts:
         return pd.DataFrame(columns=COMMON)
+    df = pd.concat(parts, ignore_index=True).drop_duplicates(["news_id", "ticker"])
+    n = df.groupby("news_id")["ticker"].transform("nunique")
+    df["n_tickers"] = df["n_tickers"].combine(n, max).astype(int)
+    return df
+
+
+def read_external_clean(path: Path) -> pd.DataFrame:
+    """Rows in the news_clean.csv layout, e.g. the delta of a cumulative backfill."""
+    df = pd.read_csv(path, dtype=str, keep_default_na=False)
+    missing = set(COLUMNS) - set(df.columns)
+    if missing:
+        sys.exit(f"{path}: missing columns {sorted(missing)}")
+    bad = ~df["published_utc"].str.match(ISO_Z_RE) | (df["url"] == "") | (df["title"] == "")
+    if bad.any():
+        sys.exit(f"{path}: {int(bad.sum())} rows lack a UTC ...Z timestamp, url or title")
+    if not is_external(df["source"]).all():
+        sys.exit(f"{path}: external rows may not use a core source name {CORE_SOURCES}")
+    upd = df["updated_utc"].where(df["updated_utc"].str.match(ISO_Z_RE), df["published_utc"])
+    return pd.DataFrame({
+        "news_id": df["url"].map(id_from_url).astype("int64"), "ticker": df["ticker"].map(to_universe),
+        "published": df["published_utc"], "updated": upd,
+        "title": df["title"].map(strip_html), "summary": df["summary"].map(strip_html),
+        "author": df["author"], "source": df["source"], "url": df["url"],
+        "n_tickers": pd.to_numeric(df["n_tickers"], errors="coerce").fillna(1).astype(int),
+        "priority": 3,
+    })[COMMON]
+
+
+def read_external_articles(path: Path) -> pd.DataFrame:
+    """The hand-sourced article list. Checked hard on the way in: each row must carry a UTC
+    timestamp ending in Z, fall inside the ticker-year range it was sourced for, and have
+    the news_id our own id rule gives its URL."""
     df = pd.read_csv(path, dtype={"ticker": str, "author": str})
     missing = set(EXTERNAL_COLS) - set(df.columns)
     if missing:
@@ -475,7 +521,7 @@ def read_external(path: Path = EXTERNAL_CSV) -> pd.DataFrame:
 def fix_external_n_tickers(df: pd.DataFrame) -> pd.DataFrame:
     """An external article can also be in another source under a different ticker; count
     every ticker the combined corpus tags it with, so the relevance filter sees the truth."""
-    ext = df["source"] == "external"
+    ext = is_external(df["source"])
     if ext.any():
         seen = df.groupby("news_id")["ticker"].transform("nunique")
         df.loc[ext, "n_tickers"] = df.loc[ext, "n_tickers"].combine(seen[ext], max).astype(int)
@@ -549,18 +595,18 @@ def cmd_add_external(args):
     path = OUT_DIR / "news_clean.csv"
     old = pd.read_csv(path, dtype={"ticker": str, "summary": str, "author": str},
                       keep_default_na=False)
-    old = old[old["source"] != "external"]          # rerunnable: replace, never stack
+    old = old[~is_external(old["source"])]          # rerunnable: replace, never stack
     base = pd.DataFrame({
         "news_id": old["news_id"].astype("int64"), "ticker": old["ticker"],
         "published": pd.to_datetime(old["published_utc"], utc=True),
         "updated": pd.to_datetime(old["updated_utc"], utc=True),
         "title": old["title"], "summary": old["summary"], "author": old["author"],
         "source": old["source"], "url": old["url"], "n_tickers": old["n_tickers"].astype(int),
-        "priority": old["source"].map(SOURCE_PRIORITY).fillna(9).astype(int),
+        "priority": old["source"].map(SOURCE_PRIORITY).fillna(3).astype(int),
     })[COMMON]
     ex = read_external()
     if ex.empty:
-        sys.exit(f"{EXTERNAL_CSV} not found")
+        sys.exit(f"no CSV files in {EXTERNAL_DIR}")
     ex["published"] = pd.to_datetime(ex["published"], utc=True)
     ex["updated"] = pd.to_datetime(ex["updated"], utc=True)
     print(f"  existing {len(base):>9,} rows   external {len(ex):,} rows")

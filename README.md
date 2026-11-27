@@ -78,25 +78,40 @@ tests/          one test file per table
 
 No free source covers 2024-01-01 to about Nov 2024.
 
-**External gap-fill (`source = external`, added Nov 27 by MJ).** 179 ticker-years (2018 to Oct 2024)
-had fewer than 10 articles, not counting years before a company listed. We added 454 hand-sourced
-articles for them from public publisher archives, sitemaps and RSS feeds. No news API or Nexis
-was used. The largest publishers are Zacks, TheStreet, GovCon Wire, gasworld, Benzinga and
-Fox Business. Each `published_utc` is the publisher's own timestamp. The file is
-`data/raw/external/added_articles.csv` (team folder), with audit columns `publisher`,
-`time_status`, `date_evidence` and `method`. The rows are headlines only (`summary` is empty) and
-go through the same relevance, de-dup and daily-cap rules.
+**External gap-fill (added Nov 27 by MJ).** 179 ticker-years (2018 to Oct 2024) had fewer than
+10 articles, not counting years before a company listed. An external backfill added 8,333 rows
+for them, all marked by `source`. Any value other than `fnspid`, `massive` or `alpaca` is
+external:
 
-- `python news.py build` includes the file automatically.
-- `python news.py add-external` merges it into an existing `news_clean.csv` when you don't have
-  the raw caches. Existing rows are left unchanged.
-- **It only partly closes the gaps.** 72 of the 179 ticker-years gained articles, and only 11 now
-  have 10 or more. 77 still have none, including AAPL, AMZN, MSFT, META, GOOGL, JPM, BAC, MA and
-  NFLX in 2021–2023. A filled year has a median of about 7 articles, against about 400 for a
-  normal ticker-year. Keep treating `has_news = 0` in those years as missing data.
-- **Possible selection bias.** These articles were searched for in 2026, so they may lean
-  toward stories that turned out to matter. Report external rows separately where it counts.
-- The Jan–Oct 2024 gap is still open for every ticker that wasn't on the gap list.
+- **Public news datasets:** `drinkall_yahoo` (6,391), `dolphin_polygon`, `finmultitime_nasdaq`
+  and `investopedia`.
+- **Publisher pages** found in public archives, sitemaps and RSS: `public_<publisher>`, such as
+  Reuters, CNN, AP, TheStreet and Zacks, plus 12 `issuer_release` rows.
+
+No news API or Nexis was used. Each `published_utc` is the publisher's or dataset's own time.
+Records with only a date were left out. Files:
+
+- `data/raw/external/addon_cumulative_delta.csv`: the rows, in the `news_clean.csv` layout.
+- `data/raw/external/provenance/`: audit files with publisher, date evidence and method.
+
+`news_id` is re-derived from the URL with our own ID rule. In-title, de-dup and daily-cap
+flags are recomputed with the same rules as every other source.
+
+- `python news.py build` includes these files automatically.
+- `python news.py add-external` merges them into an existing `news_clean.csv` without the raw
+  caches. No existing row is dropped or edited. Only `keep` can change, where a new article
+  outranks an old one under the daily cap: that happened to 1 row, an off-topic LLY FNSPID item.
+- **Result:** all 179 ticker-years now have at least 10 kept articles (median 12, minimum 10),
+  and 7,736 of the 8,333 new rows are kept. That's still thin next to about 400 for a normal
+  ticker-year, so a 10-article year doesn't mean year-round coverage.
+- **Most new rows are headlines only** (`summary` empty).
+- **Possible selection bias.** The publisher pages were searched for in 2026 and favor
+  company events, so they may lean toward stories that turned out to matter. Report results
+  with and without external rows.
+- **The Jan–Oct 2024 gap is still open** for the 64 tickers not on the gap list: 142 kept rows
+  in total, a median of 2 per ticker, and none for SNDK.
+- **We didn't use the backfill's own full `news_clean.csv`.** It deleted 8,182 existing rows,
+  54 of them kept, and changed `keep` on 6 more. The spec says never drop rows.
 
 **API keys.** Copy the template and fill in your own keys. `.env` is gitignored, so never commit it.
 
