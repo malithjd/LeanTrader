@@ -78,6 +78,26 @@ tests/          one test file per table
 
 No free source covers 2024-01-01 to about Nov 2024.
 
+**External gap-fill (`source = external`, added Nov 27 by MJ).** 179 ticker-years (2018 to Oct 2024)
+had fewer than 10 articles, not counting years before a company listed. We added 454 hand-sourced
+articles for them from public publisher archives, sitemaps and RSS feeds. No news API or Nexis
+was used. The largest publishers are Zacks, TheStreet, GovCon Wire, gasworld, Benzinga and
+Fox Business. Each `published_utc` is the publisher's own timestamp. The file is
+`data/raw/external/added_articles.csv` (team folder), with audit columns `publisher`,
+`time_status`, `date_evidence` and `method`. The rows are headlines only (`summary` is empty) and
+go through the same relevance, de-dup and daily-cap rules.
+
+- `python news.py build` includes the file automatically.
+- `python news.py add-external` merges it into an existing `news_clean.csv` when you don't have
+  the raw caches. Existing rows are left unchanged.
+- **It only partly closes the gaps.** 72 of the 179 ticker-years gained articles, and only 11 now
+  have 10 or more. 77 still have none, including AAPL, AMZN, MSFT, META, GOOGL, JPM, BAC, MA and
+  NFLX in 2021–2023. A filled year has a median of about 7 articles, against about 400 for a
+  normal ticker-year. Keep treating `has_news = 0` in those years as missing data.
+- **Possible selection bias.** These articles were searched for in 2026, so they may lean
+  toward stories that turned out to matter. Report external rows separately where it counts.
+- The Jan–Oct 2024 gap is still open for every ticker that wasn't on the gap list.
+
 **API keys.** Copy the template and fill in your own keys. `.env` is gitignored, so never commit it.
 
 ```bash

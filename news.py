@@ -7,6 +7,16 @@ Which source covers which dates (the team agreed to mix sources):
   (gap)    2024-01-01 .. ~Nov 2024     no free source reaches this
   Massive  ~Nov 2024   .. day before the first Alpaca article   (free plan: ~2 years back)
   Alpaca   first Alpaca article (~Apr 29 2026) .. now           (free plan: recent news only)
+  External 2018 .. Oct 2024, gap ticker-years only   (added by MJ, Nov 27 2026; see below)
+
+External gap-fill (source = "external"):
+  data/raw/external/added_articles.csv holds 454 articles found by hand-run scripts in public
+  publisher archives, sitemaps and RSS feeds (no news API, no Nexis) for the 179 ticker-years
+  that had fewer than 10 articles. Every published_utc comes from the publisher's own
+  timestamp (page metadata, a dateline with time zone, RSS, or a newswire record); the extra
+  columns (publisher, time_status, date_evidence, method) stay in that file for audit.
+  Headlines only: summary is empty. It goes through the same relevance, de-dup and daily-cap
+  rules as every other source, and loses to them when the same (news_id, ticker) appears twice.
 
 Commands (run from the repo root, next to dating.py and configs/):
   python news.py pull-fnspid               # Benzinga file All_external.csv (5.7 GB), keep our rows
@@ -15,6 +25,8 @@ Commands (run from the repo root, next to dating.py and configs/):
   python news.py pull-massive [--tickers]  # ~2 years of Massive news   (needs MASSIVE_API_KEY)
   python news.py pull-alpaca  [--tickers]  # recent Alpaca news         (needs APCA_API_KEY_ID / APCA_API_SECRET_KEY)
   python news.py build                     # all caches -> data/interim/news_clean.csv + news_coverage.csv
+  python news.py add-external              # merge the external file into an existing news_clean.csv
+                                           # (no raw caches needed; reruns the same filters)
 
 Every pull is cached under data/raw/<source>/ and skipped next time, so nothing is downloaded twice.
 
@@ -41,6 +53,7 @@ from dotenv import load_dotenv
 UNIVERSE_CSV = Path("configs/universe.csv")
 RAW = Path("data/raw")
 ALPACA_DIR, MASSIVE_DIR, FNSPID_DIR = RAW / "alpaca", RAW / "massive", RAW / "fnspid"
+EXTERNAL_CSV = RAW / "external" / "added_articles.csv"   # hand-sourced gap-fill, see docstring
 # FNSPID ships two news files. All_external = Benzinga headlines, which END IN JUNE 2020.
 # The Nasdaq file covers to 2023. "nasdaq-lite" is a community JSONL copy (1.8 GB) of the
 # 23 GB Nasdaq CSV; try it first, and fall back to "nasdaq" if it lacks the columns.
@@ -426,9 +439,52 @@ def read_fnspid() -> pd.DataFrame:
     })[COMMON]
 
 
+EXTERNAL_COLS = ["ticker", "range_start", "range_end", "title", "publisher",
+                 "published_utc", "time_status", "url", "author", "news_id"]
+
+
+def read_external(path: Path = EXTERNAL_CSV) -> pd.DataFrame:
+    """Hand-sourced gap-fill articles. Checked hard on the way in, because nothing else
+    re-derives these fields: each row must carry a UTC timestamp ending in Z, fall inside the
+    ticker-year range it was sourced for, and have the news_id our own id rule gives its URL."""
+    if not path.exists():
+        return pd.DataFrame(columns=COMMON)
+    df = pd.read_csv(path, dtype={"ticker": str, "author": str})
+    missing = set(EXTERNAL_COLS) - set(df.columns)
+    if missing:
+        sys.exit(f"{path}: missing columns {sorted(missing)}")
+    bad_ts = ~df["published_utc"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+    day = df["published_utc"].astype(str).str[:10]
+    outside = (day < df["range_start"]) | (day > df["range_end"])
+    bad_id = df["url"].map(id_from_url) != df["news_id"]
+    for name, bad in (("timestamp not UTC ...Z", bad_ts), ("outside its range", outside),
+                      ("news_id != id_from_url(url)", bad_id)):
+        if bad.any():
+            sys.exit(f"{path}: {int(bad.sum())} rows {name}, e.g. {df[bad].iloc[0].to_dict()}")
+    df["ticker"] = df["ticker"].map(to_universe)
+    n_tickers = df.groupby("news_id")["ticker"].transform("nunique")
+    return pd.DataFrame({
+        "news_id": df["news_id"].astype("int64"), "ticker": df["ticker"],
+        "published": df["published_utc"], "updated": df["published_utc"],
+        "title": df["title"].map(strip_html), "summary": "",
+        "author": df["author"].fillna("").where(df["author"].fillna("") != "", df["publisher"]),
+        "source": "external", "url": df["url"], "n_tickers": n_tickers.astype(int), "priority": 3,
+    })[COMMON]
+
+
+def fix_external_n_tickers(df: pd.DataFrame) -> pd.DataFrame:
+    """An external article can also be in another source under a different ticker; count
+    every ticker the combined corpus tags it with, so the relevance filter sees the truth."""
+    ext = df["source"] == "external"
+    if ext.any():
+        seen = df.groupby("news_id")["ticker"].transform("nunique")
+        df.loc[ext, "n_tickers"] = df.loc[ext, "n_tickers"].combine(seen[ext], max).astype(int)
+    return df
+
+
 def combine_sources(universe: pd.DataFrame) -> pd.DataFrame:
-    al, ms, fn = read_alpaca(), read_massive(), read_fnspid()
-    for d in (al, ms, fn):
+    al, ms, fn, ex = read_alpaca(), read_massive(), read_fnspid(), read_external()
+    for d in (al, ms, fn, ex):
         d["published"] = pd.to_datetime(d["published"], utc=True)
         d["updated"] = pd.to_datetime(d["updated"], utc=True)
 
@@ -439,18 +495,25 @@ def combine_sources(universe: pd.DataFrame) -> pd.DataFrame:
         alpaca_first_day = al["published"].min().tz_convert("America/New_York").normalize()
         ms = ms[ms["published"] < alpaca_first_day]
         al = al[al["published"] >= alpaca_first_day]
-    for name, d in (("fnspid", fn), ("massive", ms), ("alpaca", al)):
+    # External rows are not clipped: they were sourced for specific gap ticker-years.
+    for name, d in (("fnspid", fn), ("massive", ms), ("alpaca", al), ("external", ex)):
         if len(d):
             print(f"  {name:8s} {len(d):>9,} rows  {d['published'].min():%Y-%m-%d} -> "
                   f"{d['published'].max():%Y-%m-%d}")
         else:
             print(f"  {name:8s}         0 rows")
 
-    df = pd.concat([x for x in (al, ms, fn) if len(x)], ignore_index=True)
+    df = pd.concat([x for x in (al, ms, fn, ex) if len(x)], ignore_index=True)
     if df.empty:
         sys.exit("No cached articles -- run a pull first.")
+    return tidy(df, universe)
+
+
+def tidy(df: pd.DataFrame, universe: pd.DataFrame) -> pd.DataFrame:
+    """Universe tickers only, from START on, one row per (news_id, ticker), company attached."""
     df = df[df["ticker"].isin(universe["ticker"]) & (df["published"] >= pd.Timestamp(START))]
-    df = df.sort_values("priority").drop_duplicates(["news_id", "ticker"])  # same story twice
+    df = df.sort_values("priority", kind="stable").drop_duplicates(["news_id", "ticker"])  # same story twice
+    df = fix_external_n_tickers(df.reset_index(drop=True))
     return df.merge(universe, on="ticker", how="left").reset_index(drop=True)
 
 
@@ -468,14 +531,48 @@ def add_dup_groups(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def cmd_build(args):
-    from dating import decision_date  # MJ's shared function -- never write our own
-
     uni = load_universe()
     df = combine_sources(uni)
     df["summary"] = df["summary"].map(strip_html)
     df["title"] = df["title"].map(strip_html)
+    finalize(df, uni)
 
-    dd = pd.to_datetime(pd.Series(list(decision_date(df["published"])), index=df.index))
+
+SOURCE_PRIORITY = {"alpaca": 0, "massive": 1, "fnspid": 2, "external": 3}
+
+
+def cmd_add_external(args):
+    """Merge the external file into the news_clean.csv already on disk, for machines that
+    don't hold the raw FNSPID/Massive/Alpaca caches. Existing rows keep their text and
+    timestamps as written; only the filters (in_title, dup_group, keep) are rerun."""
+    uni = load_universe()
+    path = OUT_DIR / "news_clean.csv"
+    old = pd.read_csv(path, dtype={"ticker": str, "summary": str, "author": str},
+                      keep_default_na=False)
+    old = old[old["source"] != "external"]          # rerunnable: replace, never stack
+    base = pd.DataFrame({
+        "news_id": old["news_id"].astype("int64"), "ticker": old["ticker"],
+        "published": pd.to_datetime(old["published_utc"], utc=True),
+        "updated": pd.to_datetime(old["updated_utc"], utc=True),
+        "title": old["title"], "summary": old["summary"], "author": old["author"],
+        "source": old["source"], "url": old["url"], "n_tickers": old["n_tickers"].astype(int),
+        "priority": old["source"].map(SOURCE_PRIORITY).fillna(9).astype(int),
+    })[COMMON]
+    ex = read_external()
+    if ex.empty:
+        sys.exit(f"{EXTERNAL_CSV} not found")
+    ex["published"] = pd.to_datetime(ex["published"], utc=True)
+    ex["updated"] = pd.to_datetime(ex["updated"], utc=True)
+    print(f"  existing {len(base):>9,} rows   external {len(ex):,} rows")
+    finalize(tidy(pd.concat([base, ex], ignore_index=True), uni), uni)
+
+
+def finalize(df: pd.DataFrame, uni: pd.DataFrame) -> None:
+    """Dating, relevance, de-dup and daily cap; writes news_clean.csv and news_coverage.csv."""
+    from dating import decision_date  # MJ's shared function -- never write our own
+
+    df["summary"] = df["summary"].fillna("")
+    dd =pd.to_datetime(pd.Series(list(decision_date(df["published"])), index=df.index))
     check = df["published"].sample(min(200, len(df)), random_state=0)   # safety check
     assert (pd.to_datetime(check.map(decision_date)) == dd[check.index]).all(), \
         "decision_date gave different answers for a column vs single rows -- tell Nati/Claude"
@@ -527,6 +624,8 @@ if __name__ == "__main__":
                    help="which FNSPID file: external (default), nasdaq-lite, nasdaq")
     p.add_argument("--local", help="use an already-downloaded copy of that file instead of downloading")
     sub.add_parser("build")
+    sub.add_parser("add-external")
     a = ap.parse_args()
     {"pull-alpaca": cmd_pull_alpaca, "pull-massive": cmd_pull_massive,
-     "pull-fnspid": cmd_pull_fnspid, "build": cmd_build}[a.cmd](a)
+     "pull-fnspid": cmd_pull_fnspid, "build": cmd_build,
+     "add-external": cmd_add_external}[a.cmd](a)
