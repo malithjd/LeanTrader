@@ -76,7 +76,24 @@ tests/          one test file per table
 | Massive | about the last 2 years         | `MASSIVE_API_KEY`               |
 | Alpaca  | recent news (~Apr 2026 onward) | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
 
-No free source covers 2024-01-01 to about Nov 2024.
+No free source we have tried covers 2024-01-01 to about Nov 2024. FNSPID ends in 2023, the free
+Massive plan reaches only about 2 years back, and our Alpaca pull starts at Apr 29, 2026. The
+public FinMultiTime dataset (Nasdaq news to 2025) has the same hole: AAPL and KO have no
+articles in Jan–Oct 2024.
+
+**Filling the 2024 gap (needs API keys):**
+
+```bash
+python news.py probe-2024                      # 1 request per API: do your keys reach Mar 2024?
+python news.py pull-alpaca --gap-2024          # if the Alpaca line shows articles (free)
+python news.py pull-massive --gap-2024 --gap-seconds 0.2   # or: Massive Stocks Starter ($29/mo, 5y history)
+python news.py add-external                    # merge into news_clean.csv; no other caches needed
+```
+
+The gap pulls go to `data/raw/alpaca_2024/` and `data/raw/massive_2024/`. Each keeps its own
+`source` name and is clipped to 2024-01-01 to 2024-11-22 (New York time), the day before the
+main Massive cache starts. Rerunning `add-external` replaces earlier gap and external rows
+instead of stacking them. Existing rows are never dropped or edited.
 
 **External gap-fill (added Nov 27 by MJ).** 179 ticker-years (2018 to Oct 2024) had fewer than
 10 articles, not counting years before a company listed. An external backfill added 8,333 rows
