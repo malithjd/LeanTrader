@@ -43,9 +43,16 @@ def build_examples(labels_df: pd.DataFrame, news_df: pd.DataFrame, split: str) -
             merged[col] = merged[col + "_x"].fillna(merged[col + "_y"])
     examples: list[dict] = []
     for r in merged.itertuples(index=False):
-        title = getattr(r, "title", "") or ""
-        summary = getattr(r, "summary", "") or ""
-        user = format_input(r.ticker, r.company, title, summary)
+        title = str(getattr(r, "title", "") or "")
+        if title == "nan":
+            title = ""
+        summary = str(getattr(r, "summary", "") or "")
+        if summary == "nan":
+            summary = ""
+        company = str(getattr(r, "company", "") or r.ticker)
+        if company == "nan":
+            company = r.ticker
+        user = format_input(r.ticker, company, title, summary)
         label = {
             "relevant": bool(int(r.relevant)),
             "event_type": r.event_type,
