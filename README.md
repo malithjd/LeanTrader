@@ -157,6 +157,14 @@ python news.py add-external
   across the four export files, 21 not about the company in the headline or lead, 28 sport or
   politics items, 6 other entities, and a few others. Kept LIN articles went from 11 to 26 in
   2025, and DUK from 5 to 12.
+- **Batch 2** (SO, searches 0015–0020, 2025-Q1 to 2026-Q2 from `NexisUni/search_queue_quarterly.csv`):
+  598 downloaded articles, 217 merged, 214 kept. Exclusions: 177 press releases (Market News
+  Publishing, MENAFN and similar), 108 holdings-site pages, and 50 other entities (Norfolk Southern,
+  the UK grocer Southern Co-op). For SO, the company test also accepts the subsidiaries (Georgia
+  Power, Alabama Power, Mississippi Power, Southern Company Gas, Vogtle, ...). Most 2025–26 SO
+  months now have 10–24 kept articles; only Jan, Apr and Sep 2025 are still a few short.
+- **Query order matters in Nexis.** An `AND NOT HLEAD(...)` placed before the `DATE` range makes
+  Nexis ignore the dates. The queue puts `DATE` first.
 
 **API keys.** Copy the template and fill in your own keys. `.env` is gitignored, so never commit it.
 

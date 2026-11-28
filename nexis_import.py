@@ -64,12 +64,18 @@ PR_SOURCES = re.compile(r"Business Wire|PR Newswire|GlobeNewswire|Globe Newswire
                         r"Regulatory News Service|FinancialWire|Targeted News Service|Impact News Service|"
                         r"US Fed News|States News Service|Financial Deals Tracker|Contify|News Bites|"
                         r"Dion Global|Africa Centres for Disease|Mena Report|Chemicals Monitor|"
-                        r"National News Agency \(UzA\)", re.I)
+                        r"National News Agency \(UzA\)|Market News Publishing|MENAFN - Press Releases|"
+                        r"Gulf Oil & Gas|3BL|Monitor Worldwide|Close-Up|Industry SnapShot|"
+                        r"Congressional Documents|Press Releases", re.I)
 PR_TITLES = re.compile(r"^(BUSINESSWIRE|EQS|PRNEWSWIRE|GLOBENEWSWIRE)\b")
 ROBO_SOURCES = re.compile(r"Zolmax|Ticker Report|DailyPolitical|Transcript Daily|Watchlist News|MarketBeat|"
                           r"ETF Daily News|Cerbat Gem|Modern Readers|Enterprise Leader|Markets Daily|"
-                          r"American Banking News|Community Financial News|Stock Observer|Lincolnian", re.I)
+                          r"American Banking|Community Financial News|Stock Observer|Lincolnian", re.I)
 ROBO_TITLES = re.compile(r"\bShares? (?:of|in)\b.*\b(?:Purchased|Bought|Sold|Acquired)\b|"
+                         r"\b(?:Sells|Buys|Acquires|Purchases|Trims|Boosts|Raises|Lowers|Cuts|Reduces|Grows|"
+                         r"Lifts|Increases|Decreases)\b.{0,40}\b(?:Shares|Stake|Position|Holdings)\b|"
+                         r"\bMakes New \$[\d.,]+ (?:Million |Thousand )?Investment\b|\bInvests \$[\d.,]+|"
+                         r"\b(?:Analysts|Brokerages) Set\b|\bConsensus (?:Rating|Recommendation)\b|"
                          r"\b(?:Stake|Position|Holdings?) in\b|\bversus Its Rivals\b|\band The Competition\b|"
                          r"\bCritical Survey\b|\bHead to Head\b|\bHead-To-Head\b|\bShort Interest\b|"
                          r"Weekly Analysts' Ratings", re.I)
@@ -78,6 +84,16 @@ NOT_THE_COMPANY = {  # same word, different entity
                       r"Handling|Linde MH\b|Hoppstaedter|Linde Hydraulic|Linde Hydraulik|Linde Engineering India",
                       re.I),
     "DUK": re.compile(r"Duke University|Duke Health|Duke Realty|Blue Devils", re.I),
+    "SO": re.compile(r"Norfolk Southern|Southern Co-?op|Southern Co-operative|Co-op Group|Southern California|"
+                     r"Southern Copper|Southern Baptist|Southern Glazer|Southern Water|Southern Railway|"
+                     r"Southern Missouri|Southern First|Southern States", re.I),
+}
+# the company test for tickers whose universe name is too loose (SO = "Southern") or whose news is
+# mostly about subsidiaries; replaces news.name_patterns for the "company named" check
+STRICT_ENTITY = {
+    "SO": re.compile(r"Southern Company|\bSouthern Co\b\.?(?![-‐‑]?op)|Georgia Power|Alabama Power|"
+                     r"Mississippi Power|Southern Power|Southern Company Gas|Nicor Gas|Atlanta Gas Light|"
+                     r"Southern Nuclear|Southern Linc|Southern Telecom|Vogtle|NYSE:\s?SO\b|\(SO\)", re.I),
 }
 COMPANY_CUE = {  # names that are also people's names: headline/lead must carry a company cue too
     "LIN": re.compile(r"Linde (?:plc|PLC|AG|Inc|Gas|Gases|Hydrogen|Engineering|Group)|\(LIN\)|"
@@ -250,7 +266,8 @@ def main():
                 reason = "auto-generated holdings/comparison title"
             elif t in NOT_THE_COMPANY and NOT_THE_COMPANY[t].search(head):
                 reason = "different entity with the same name"
-            elif not any(p.search(head) for p in pats[t]):
+            elif not (STRICT_ENTITY[t].search(head) if t in STRICT_ENTITY
+                      else any(p.search(head) for p in pats[t])):
                 reason = "company not in headline or lead"
             elif NOT_TOPIC.search(head):
                 reason = "not about the company (sport / politics / person with the same name)"
