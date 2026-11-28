@@ -7,6 +7,20 @@ Which source covers which dates (the team agreed to mix sources):
   (gap)    2024-01-01 .. ~Nov 2024     no free source reaches this
   Massive  ~Nov 2024   .. day before the first Alpaca article   (free plan: ~2 years back)
   Alpaca   first Alpaca article (~Apr 29 2026) .. now           (free plan: recent news only)
+  External 2018 .. Oct 2024, gap ticker-years mostly  (added by MJ, Nov 27 2026; see below)
+
+External gap-fill (any source other than fnspid / massive / alpaca):
+  data/raw/external/*.csv brings the 179 ticker-years (2018 .. Oct 2024) that had fewer than
+  10 articles up to at least 10 kept each. addon_cumulative_delta.csv = the 8,333 rows an
+  external backfill added: public datasets (drinkall_yahoo, dolphin_polygon,
+  finmultitime_nasdaq, investopedia) plus publisher pages found in public archives, sitemaps
+  and RSS (public_<publisher>, issuer_release). Its source names are kept as given. Timestamps
+  are the publisher's or dataset's own UTC times; date-only records were left out.
+  news_id is re-derived from the URL with id_from_url, and filters are rerun here.
+  data/raw/external/provenance/ holds the audit files (publisher, date evidence, method).
+  Most new rows are headlines only (summary empty). Existing rows are never dropped or edited.
+  nexisuni_batch*.csv (source = NexisUni) = English news from Nexis Uni (Fordham), built by
+  nexis_import.py from Nexis DOCX exports; headline + a lead of at most 500 characters.
 
 Commands (run from the repo root, next to dating.py and configs/):
   python news.py pull-fnspid               # Benzinga file All_external.csv (5.7 GB), keep our rows
@@ -15,6 +29,11 @@ Commands (run from the repo root, next to dating.py and configs/):
   python news.py pull-massive [--tickers]  # ~2 years of Massive news   (needs MASSIVE_API_KEY)
   python news.py pull-alpaca  [--tickers]  # recent Alpaca news         (needs APCA_API_KEY_ID / APCA_API_SECRET_KEY)
   python news.py build                     # all caches -> data/interim/news_clean.csv + news_coverage.csv
+  python news.py add-external              # merge data/raw/external/*.csv and the 2024 gap pulls
+                                           # into an existing news_clean.csv (no raw caches needed)
+  python news.py probe-2024                # 1 request per API: do your keys reach Jan-Oct 2024?
+  python news.py pull-alpaca --gap-2024    # fill 2024-01-01 .. 2024-11-22 (if the probe says yes)
+  python news.py pull-massive --gap-2024 --gap-seconds 0.2   # same, on a Massive plan with 5y history
 
 Every pull is cached under data/raw/<source>/ and skipped next time, so nothing is downloaded twice.
 
@@ -41,6 +60,14 @@ from dotenv import load_dotenv
 UNIVERSE_CSV = Path("configs/universe.csv")
 RAW = Path("data/raw")
 ALPACA_DIR, MASSIVE_DIR, FNSPID_DIR = RAW / "alpaca", RAW / "massive", RAW / "fnspid"
+EXTERNAL_DIR = RAW / "external"   # hand-sourced / backfilled gap-fill CSVs, see docstring
+# 2024 gap pulls (--gap-2024): own folders so the main caches and their source windows stay as they are
+ALPACA_GAP_DIR, MASSIVE_GAP_DIR = RAW / "alpaca_2024", RAW / "massive_2024"
+GAP_START, GAP_PULL_END = "2024-01-01T00:00:00Z", "2024-11-30T23:59:59Z"
+MASSIVE_MAIN_FIRST_DAY = "2024-11-23"   # first article in the main Massive cache
+# The gap starts where FNSPID is clipped: midnight New York time (FNSPID rows for 2023-12-31
+# are stamped 23:59:59 ET = 04:59:59Z on Jan 1, and must not count as gap rows).
+GAP_FIRST = pd.Timestamp("2024-01-01", tz="America/New_York")
 # FNSPID ships two news files. All_external = Benzinga headlines, which END IN JUNE 2020.
 # The Nasdaq file covers to 2023. "nasdaq-lite" is a community JSONL copy (1.8 GB) of the
 # 23 GB Nasdaq CSV; try it first, and fall back to "nasdaq" if it lacks the columns.
@@ -189,9 +216,9 @@ def cached_write(final: Path, fetch):
 
 
 # ---------------------------------------------------------------- pull: Alpaca
-def pull_alpaca_ticker(session, ticker, end, throttle):
+def pull_alpaca_ticker(session, ticker, end, throttle, start=START, folder=ALPACA_DIR):
     def fetch(f):
-        params = {"symbols": to_dot(ticker), "start": START, "end": end,
+        params = {"symbols": to_dot(ticker), "start": start, "end": end,
                   "limit": ALPACA_PAGE, "include_content": "false"}
         n = 0
         while True:
@@ -208,23 +235,27 @@ def pull_alpaca_ticker(session, ticker, end, throttle):
             if not body.get("next_page_token"):
                 return n
             params["page_token"] = body["next_page_token"]
-    cached_write(ALPACA_DIR / f"{ticker}.jsonl", fetch)
+    cached_write(folder / f"{ticker}.jsonl", fetch)
 
 
 def cmd_pull_alpaca(args):
     key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
     if not key or not secret:
         sys.exit("Set APCA_API_KEY_ID and APCA_API_SECRET_KEY first (in .env, see .env.example).")
-    ALPACA_DIR.mkdir(parents=True, exist_ok=True)
+    folder = ALPACA_GAP_DIR if args.gap_2024 else ALPACA_DIR
+    start = GAP_START if args.gap_2024 else START
+    end = GAP_PULL_END if args.gap_2024 else pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+    folder.mkdir(parents=True, exist_ok=True)
     s = requests.Session()
     s.headers.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
-    end, th = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"), Throttle(ALPACA_GAP)
+    th = Throttle(ALPACA_GAP if args.gap_seconds is None else args.gap_seconds)
+    print(f"Alpaca {start} -> {end} into {folder}")
     for t in pick_tickers(args.tickers):
-        pull_alpaca_ticker(s, t, end, th)
+        pull_alpaca_ticker(s, t, end, th, start, folder)
 
 
 # ---------------------------------------------------------------- pull: Massive
-def pull_massive_ticker(session, ticker, start, end, key, throttle):
+def pull_massive_ticker(session, ticker, start, end, key, throttle, folder=MASSIVE_DIR):
     def fetch(f):
         url = MASSIVE_URL
         params = {"ticker": MASSIVE_SYMBOL.get(ticker, to_dot(ticker)),
@@ -245,22 +276,51 @@ def pull_massive_ticker(session, ticker, start, end, key, throttle):
             url = body.get("next_url")          # already holds the cursor and filters...
             params = {"apiKey": key}            # ...but not the key
         return n
-    cached_write(MASSIVE_DIR / f"{ticker}.jsonl", fetch)
+    cached_write(folder / f"{ticker}.jsonl", fetch)
 
 
 def cmd_pull_massive(args):
     key = os.environ.get("MASSIVE_API_KEY")
     if not key:
         sys.exit("Set MASSIVE_API_KEY first (in .env, see .env.example).")
-    MASSIVE_DIR.mkdir(parents=True, exist_ok=True)
     now = pd.Timestamp.now(tz="UTC")
-    start = (now - pd.Timedelta(days=MASSIVE_DAYS_BACK)).strftime("%Y-%m-%dT00:00:00Z")
-    end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if args.gap_2024:   # needs a plan with > 2 years of history (Stocks Starter or higher)
+        folder, start, end = MASSIVE_GAP_DIR, GAP_START, GAP_PULL_END
+    else:
+        folder = MASSIVE_DIR
+        start = (now - pd.Timedelta(days=MASSIVE_DAYS_BACK)).strftime("%Y-%m-%dT00:00:00Z")
+        end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    folder.mkdir(parents=True, exist_ok=True)
+    gap = MASSIVE_GAP if args.gap_seconds is None else args.gap_seconds
     tickers = pick_tickers(args.tickers)
-    print(f"Massive {start} -> {end}, {len(tickers)} tickers, ~{MASSIVE_GAP:.0f}s per call")
-    s, th = requests.Session(), Throttle(MASSIVE_GAP)
+    print(f"Massive {start} -> {end} into {folder}, {len(tickers)} tickers, ~{gap:g}s per call")
+    s, th = requests.Session(), Throttle(gap)
     for t in tickers:
-        pull_massive_ticker(s, t, start, end, key, th)
+        pull_massive_ticker(s, t, start, end, key, th, folder)
+
+
+def cmd_probe_2024(args):
+    """One request per API with the keys in .env: does this account reach Jan-Oct 2024?"""
+    window = {"start": "2024-03-01T00:00:00Z", "end": "2024-03-31T23:59:59Z"}
+    key, secret = os.environ.get("APCA_API_KEY_ID"), os.environ.get("APCA_API_SECRET_KEY")
+    if key and secret:
+        r = requests.get(ALPACA_URL, headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret},
+                         params={"symbols": "AAPL", **window, "limit": 50, "sort": "asc"}, timeout=30)
+        news = r.json().get("news", []) if r.ok else []
+        print(f"Alpaca  AAPL Mar 2024: HTTP {r.status_code}, {len(news)} articles"
+              + (f", first {news[0]['created_at']}" if news else f" {r.text[:150]}"))
+    else:
+        print("Alpaca  no APCA_API_KEY_ID / APCA_API_SECRET_KEY in .env")
+    mkey = os.environ.get("MASSIVE_API_KEY")
+    if mkey:
+        r = requests.get(MASSIVE_URL, params={"ticker": "AAPL", "published_utc.gte": window["start"],
+                         "published_utc.lte": window["end"], "limit": 50, "order": "asc", "apiKey": mkey},
+                         timeout=30)
+        res = r.json().get("results", []) if r.ok else []
+        print(f"Massive AAPL Mar 2024: HTTP {r.status_code}, {len(res)} articles"
+              + (f", first {res[0]['published_utc']}" if res else f" {r.text[:150]}"))
+    else:
+        print("Massive no MASSIVE_API_KEY in .env")
 
 
 # ---------------------------------------------------------------- pull: FNSPID
@@ -374,9 +434,9 @@ def read_jsonl_dir(folder: Path):
                 yield json.loads(line)
 
 
-def read_alpaca() -> pd.DataFrame:
+def read_alpaca(folder: Path = ALPACA_DIR) -> pd.DataFrame:
     rows = []
-    for a in read_jsonl_dir(ALPACA_DIR):
+    for a in read_jsonl_dir(folder):
         syms = [to_universe(s) for s in (a.get("symbols") or [])]
         for t in syms:
             rows.append({"news_id": int(a["id"]), "ticker": t,
@@ -387,9 +447,9 @@ def read_alpaca() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COMMON)
 
 
-def read_massive() -> pd.DataFrame:
+def read_massive(folder: Path = MASSIVE_DIR) -> pd.DataFrame:
     rows = []
-    for a in read_jsonl_dir(MASSIVE_DIR):
+    for a in read_jsonl_dir(folder):
         syms = [to_universe(s) for s in (a.get("tickers") or [])]
         url = a.get("article_url") or ""
         for t in syms:
@@ -426,9 +486,116 @@ def read_fnspid() -> pd.DataFrame:
     })[COMMON]
 
 
+EXTERNAL_COLS = ["ticker", "range_start", "range_end", "title", "publisher",
+                 "published_utc", "time_status", "url", "author", "news_id"]
+
+
+CORE_SOURCES = ("alpaca", "massive", "fnspid")   # every other source value is external gap-fill
+ISO_Z_RE = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
+
+
+def is_external(source: pd.Series) -> pd.Series:
+    return ~source.isin(CORE_SOURCES)
+
+
+def read_external(folder: Path = EXTERNAL_DIR) -> pd.DataFrame:
+    """Every CSV directly in data/raw/external/ (sub-folders hold audit files only). Two layouts:
+    the hand-sourced article list (range_start/range_end/publisher...) or rows already in the
+    news_clean.csv layout. Only text, URL, timestamp and ticker are trusted: news_id is re-derived
+    from the URL with our own id rule, and in_title / dup_group / keep / decision_date are rerun."""
+    files = sorted(folder.glob("*.csv")) if folder.exists() else []
+    parts = [read_external_clean(p) if "dup_group" in pd.read_csv(p, nrows=0).columns
+             else read_external_articles(p) for p in files]
+    if not parts:
+        return pd.DataFrame(columns=COMMON)
+    df = pd.concat(parts, ignore_index=True).drop_duplicates(["news_id", "ticker"])
+    n = df.groupby("news_id")["ticker"].transform("nunique")
+    df["n_tickers"] = df["n_tickers"].combine(n, max).astype(int)
+    return df
+
+
+def read_external_clean(path: Path) -> pd.DataFrame:
+    """Rows in the news_clean.csv layout, e.g. the delta of a cumulative backfill."""
+    df = pd.read_csv(path, dtype=str, keep_default_na=False)
+    missing = set(COLUMNS) - set(df.columns)
+    if missing:
+        sys.exit(f"{path}: missing columns {sorted(missing)}")
+    bad = ~df["published_utc"].str.match(ISO_Z_RE) | (df["url"] == "") | (df["title"] == "")
+    if bad.any():
+        sys.exit(f"{path}: {int(bad.sum())} rows lack a UTC ...Z timestamp, url or title")
+    if not is_external(df["source"]).all():
+        sys.exit(f"{path}: external rows may not use a core source name {CORE_SOURCES}")
+    upd = df["updated_utc"].where(df["updated_utc"].str.match(ISO_Z_RE), df["published_utc"])
+    return pd.DataFrame({
+        "news_id": df["url"].map(id_from_url).astype("int64"), "ticker": df["ticker"].map(to_universe),
+        "published": df["published_utc"], "updated": upd,
+        "title": df["title"].map(strip_html), "summary": df["summary"].map(strip_html),
+        "author": df["author"], "source": df["source"], "url": df["url"],
+        "n_tickers": pd.to_numeric(df["n_tickers"], errors="coerce").fillna(1).astype(int),
+        "priority": 3,
+    })[COMMON]
+
+
+def read_external_articles(path: Path) -> pd.DataFrame:
+    """The hand-sourced article list. Checked hard on the way in: each row must carry a UTC
+    timestamp ending in Z, fall inside the ticker-year range it was sourced for, and have
+    the news_id our own id rule gives its URL."""
+    df = pd.read_csv(path, dtype={"ticker": str, "author": str})
+    missing = set(EXTERNAL_COLS) - set(df.columns)
+    if missing:
+        sys.exit(f"{path}: missing columns {sorted(missing)}")
+    bad_ts = ~df["published_utc"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+    day = df["published_utc"].astype(str).str[:10]
+    outside = (day < df["range_start"]) | (day > df["range_end"])
+    bad_id = df["url"].map(id_from_url) != df["news_id"]
+    for name, bad in (("timestamp not UTC ...Z", bad_ts), ("outside its range", outside),
+                      ("news_id != id_from_url(url)", bad_id)):
+        if bad.any():
+            sys.exit(f"{path}: {int(bad.sum())} rows {name}, e.g. {df[bad].iloc[0].to_dict()}")
+    df["ticker"] = df["ticker"].map(to_universe)
+    n_tickers = df.groupby("news_id")["ticker"].transform("nunique")
+    return pd.DataFrame({
+        "news_id": df["news_id"].astype("int64"), "ticker": df["ticker"],
+        "published": df["published_utc"], "updated": df["published_utc"],
+        "title": df["title"].map(strip_html), "summary": "",
+        "author": df["author"].fillna("").where(df["author"].fillna("") != "", df["publisher"]),
+        "source": "external", "url": df["url"], "n_tickers": n_tickers.astype(int), "priority": 3,
+    })[COMMON]
+
+
+def fix_external_n_tickers(df: pd.DataFrame) -> pd.DataFrame:
+    """An external article can also be in another source under a different ticker; count
+    every ticker the combined corpus tags it with, so the relevance filter sees the truth."""
+    ext = is_external(df["source"])
+    if ext.any():
+        seen = df.groupby("news_id")["ticker"].transform("nunique")
+        df.loc[ext, "n_tickers"] = df.loc[ext, "n_tickers"].combine(seen[ext], max).astype(int)
+    return df
+
+
+def read_gap_2024(massive_first: pd.Timestamp) -> pd.DataFrame:
+    """The --gap-2024 pulls (Alpaca and/or Massive), clipped to 2024-01-01 .. the day before the
+    main Massive cache starts, so they never overlap the main caches. Same source names and
+    priorities as the main pulls: one Benzinga story in both keeps the Alpaca copy."""
+    gap = pd.concat([read_alpaca(ALPACA_GAP_DIR), read_massive(MASSIVE_GAP_DIR)], ignore_index=True)
+    if gap.empty:
+        return pd.DataFrame(columns=COMMON)
+    gap["published"] = pd.to_datetime(gap["published"], utc=True)
+    gap["updated"] = pd.to_datetime(gap["updated"], utc=True)
+    gap["title"], gap["summary"] = gap["title"].map(strip_html), gap["summary"].map(strip_html)
+    return gap[(gap["published"] >= GAP_FIRST) & (gap["published"] < massive_first)]
+
+
+def massive_first_day(_published=None) -> pd.Timestamp:
+    """The 2024 gap ends where the main Massive cache starts: its first article is
+    2024-11-23 (New York), from the free plan's ~2-year reach on the pull date. Fixed, so a
+    rerun of add-external isn't confused by earlier gap rows that also say source = massive."""
+    return pd.Timestamp(MASSIVE_MAIN_FIRST_DAY, tz="America/New_York")
+
+
 def combine_sources(universe: pd.DataFrame) -> pd.DataFrame:
-    al, ms, fn = read_alpaca(), read_massive(), read_fnspid()
-    for d in (al, ms, fn):
+    al, ms, fn, ex = read_alpaca(), read_massive(), read_fnspid(), read_external()
+    for d in (al, ms, fn, ex):
         d["published"] = pd.to_datetime(d["published"], utc=True)
         d["updated"] = pd.to_datetime(d["updated"], utc=True)
 
@@ -439,18 +606,26 @@ def combine_sources(universe: pd.DataFrame) -> pd.DataFrame:
         alpaca_first_day = al["published"].min().tz_convert("America/New_York").normalize()
         ms = ms[ms["published"] < alpaca_first_day]
         al = al[al["published"] >= alpaca_first_day]
-    for name, d in (("fnspid", fn), ("massive", ms), ("alpaca", al)):
+    gp = read_gap_2024(massive_first_day())
+    # External rows are not clipped: they were sourced for specific gap ticker-years.
+    for name, d in (("fnspid", fn), ("massive", ms), ("alpaca", al), ("gap-2024", gp), ("external", ex)):
         if len(d):
             print(f"  {name:8s} {len(d):>9,} rows  {d['published'].min():%Y-%m-%d} -> "
                   f"{d['published'].max():%Y-%m-%d}")
         else:
             print(f"  {name:8s}         0 rows")
 
-    df = pd.concat([x for x in (al, ms, fn) if len(x)], ignore_index=True)
+    df = pd.concat([x for x in (al, ms, fn, gp, ex) if len(x)], ignore_index=True)
     if df.empty:
         sys.exit("No cached articles -- run a pull first.")
+    return tidy(df, universe)
+
+
+def tidy(df: pd.DataFrame, universe: pd.DataFrame) -> pd.DataFrame:
+    """Universe tickers only, from START on, one row per (news_id, ticker), company attached."""
     df = df[df["ticker"].isin(universe["ticker"]) & (df["published"] >= pd.Timestamp(START))]
-    df = df.sort_values("priority").drop_duplicates(["news_id", "ticker"])  # same story twice
+    df = df.sort_values("priority", kind="stable").drop_duplicates(["news_id", "ticker"])  # same story twice
+    df = fix_external_n_tickers(df.reset_index(drop=True))
     return df.merge(universe, on="ticker", how="left").reset_index(drop=True)
 
 
@@ -468,14 +643,54 @@ def add_dup_groups(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def cmd_build(args):
-    from dating import decision_date  # MJ's shared function -- never write our own
-
     uni = load_universe()
     df = combine_sources(uni)
     df["summary"] = df["summary"].map(strip_html)
     df["title"] = df["title"].map(strip_html)
+    finalize(df, uni)
 
-    dd = pd.to_datetime(pd.Series(list(decision_date(df["published"])), index=df.index))
+
+SOURCE_PRIORITY = {"alpaca": 0, "massive": 1, "fnspid": 2, "external": 3}
+
+
+def cmd_add_external(args):
+    """Merge the supplements -- data/raw/external/*.csv and the --gap-2024 pulls -- into the
+    news_clean.csv already on disk, for machines that don't hold the raw FNSPID/Massive/Alpaca
+    caches. Existing rows keep their text and timestamps as written; only the filters
+    (in_title, dup_group, keep) are rerun. Rerunnable: earlier supplement rows are replaced."""
+    uni = load_universe()
+    path = OUT_DIR / "news_clean.csv"
+    old = pd.read_csv(path, dtype={"ticker": str, "summary": str, "author": str},
+                      keep_default_na=False)
+    pub = pd.to_datetime(old["published_utc"], utc=True)
+    m_first = massive_first_day()
+    in_gap = (pub >= GAP_FIRST) & (pub < m_first) & old["source"].isin(["alpaca", "massive"])
+    old = old[~is_external(old["source"]) & ~in_gap]
+    base = pd.DataFrame({
+        "news_id": old["news_id"].astype("int64"), "ticker": old["ticker"],
+        "published": pd.to_datetime(old["published_utc"], utc=True),
+        "updated": pd.to_datetime(old["updated_utc"], utc=True),
+        "title": old["title"], "summary": old["summary"], "author": old["author"],
+        "source": old["source"], "url": old["url"], "n_tickers": old["n_tickers"].astype(int),
+        "priority": old["source"].map(SOURCE_PRIORITY).fillna(3).astype(int),
+    })[COMMON]
+    ex = read_external()
+    ex["published"] = pd.to_datetime(ex["published"], utc=True)
+    ex["updated"] = pd.to_datetime(ex["updated"], utc=True)
+    gp = read_gap_2024(m_first)
+    if ex.empty and gp.empty:
+        sys.exit(f"nothing to add: no CSV in {EXTERNAL_DIR} and no --gap-2024 pulls")
+    print(f"  existing {len(base):>9,} rows   external {len(ex):,} rows   "
+          f"gap-2024 {len(gp):,} rows (to {m_first:%Y-%m-%d})")
+    finalize(tidy(pd.concat([x for x in (base, gp, ex) if len(x)], ignore_index=True), uni), uni)
+
+
+def finalize(df: pd.DataFrame, uni: pd.DataFrame) -> None:
+    """Dating, relevance, de-dup and daily cap; writes news_clean.csv and news_coverage.csv."""
+    from dating import decision_date  # MJ's shared function -- never write our own
+
+    df["summary"] = df["summary"].fillna("")
+    dd =pd.to_datetime(pd.Series(list(decision_date(df["published"])), index=df.index))
     check = df["published"].sample(min(200, len(df)), random_state=0)   # safety check
     assert (pd.to_datetime(check.map(decision_date)) == dd[check.index]).all(), \
         "decision_date gave different answers for a column vs single rows -- tell Nati/Claude"
@@ -522,11 +737,19 @@ if __name__ == "__main__":
     for name in ("pull-alpaca", "pull-massive"):
         p = sub.add_parser(name)
         p.add_argument("--tickers", help="comma list, e.g. AAPL,BRK-B,DUK (default: all 100)")
+        p.add_argument("--gap-2024", action="store_true",
+                       help="pull 2024-01-01 .. 2024-11-30 into data/raw/<source>_2024/ (fills the 2024 gap)")
+        p.add_argument("--gap-seconds", type=float,
+                       help="seconds between calls (default: the free plan's limit)")
     p = sub.add_parser("pull-fnspid")
     p.add_argument("--file", choices=list(FNSPID_FILES), default="external",
                    help="which FNSPID file: external (default), nasdaq-lite, nasdaq")
     p.add_argument("--local", help="use an already-downloaded copy of that file instead of downloading")
     sub.add_parser("build")
+    sub.add_parser("add-external", aliases=["add-supplements"])
+    sub.add_parser("probe-2024")
     a = ap.parse_args()
     {"pull-alpaca": cmd_pull_alpaca, "pull-massive": cmd_pull_massive,
-     "pull-fnspid": cmd_pull_fnspid, "build": cmd_build}[a.cmd](a)
+     "pull-fnspid": cmd_pull_fnspid, "build": cmd_build,
+     "add-external": cmd_add_external, "add-supplements": cmd_add_external,
+     "probe-2024": cmd_probe_2024}[a.cmd](a)

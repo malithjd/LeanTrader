@@ -76,7 +76,95 @@ tests/          one test file per table
 | Massive | about the last 2 years         | `MASSIVE_API_KEY`               |
 | Alpaca  | recent news (~Apr 2026 onward) | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
 
-No free source covers 2024-01-01 to about Nov 2024.
+No free source we have tried covers 2024-01-01 to about Nov 2024. FNSPID ends in 2023, the free
+Massive plan reaches only about 2 years back, and our Alpaca pull starts at Apr 29, 2026. The
+public FinMultiTime dataset (Nasdaq news to 2025) has the same hole: AAPL and KO have no
+articles in Jan–Oct 2024.
+
+**Filling the 2024 gap (needs API keys):**
+
+```bash
+python news.py probe-2024                      # 1 request per API: do your keys reach Mar 2024?
+python news.py pull-alpaca --gap-2024          # if the Alpaca line shows articles (free)
+python news.py pull-massive --gap-2024 --gap-seconds 0.2   # or: Massive Stocks Starter ($29/mo, 5y history)
+python news.py add-external                    # merge into news_clean.csv; no other caches needed
+```
+
+The gap pulls go to `data/raw/alpaca_2024/` and `data/raw/massive_2024/`. Each keeps its own
+`source` name and is clipped to 2024-01-01 to 2024-11-22 (New York time), the day before the
+main Massive cache starts. Rerunning `add-external` replaces earlier gap and external rows
+instead of stacking them. Existing rows are never dropped or edited.
+
+**External gap-fill (added Nov 27 by MJ).** 179 ticker-years (2018 to Oct 2024) had fewer than
+10 articles, not counting years before a company listed. An external backfill added 8,333 rows
+for them, all marked by `source`. Any value other than `fnspid`, `massive` or `alpaca` is
+external:
+
+- **Public news datasets:** `drinkall_yahoo` (6,391), `dolphin_polygon`, `finmultitime_nasdaq`
+  and `investopedia`.
+- **Publisher pages** found in public archives, sitemaps and RSS: `public_<publisher>`, such as
+  Reuters, CNN, AP, TheStreet and Zacks, plus 12 `issuer_release` rows.
+
+No news API or Nexis was used. Each `published_utc` is the publisher's or dataset's own time.
+Records with only a date were left out. Files:
+
+- `data/raw/external/addon_cumulative_delta.csv`: the rows, in the `news_clean.csv` layout.
+- `data/raw/external/provenance/`: audit files with publisher, date evidence and method.
+
+`news_id` is re-derived from the URL with our own ID rule. In-title, de-dup and daily-cap
+flags are recomputed with the same rules as every other source.
+
+- `python news.py build` includes these files automatically.
+- `python news.py add-external` merges them into an existing `news_clean.csv` without the raw
+  caches. No existing row is dropped or edited. Only `keep` can change, where a new article
+  outranks an old one under the daily cap: that happened to 1 row, an off-topic LLY FNSPID item.
+- **Result:** all 179 ticker-years now have at least 10 kept articles (median 12, minimum 10),
+  and 7,736 of the 8,333 new rows are kept. That's still thin next to about 400 for a normal
+  ticker-year, so a 10-article year doesn't mean year-round coverage.
+- **Most new rows are headlines only** (`summary` empty).
+- **Possible selection bias.** The publisher pages were searched for in 2026 and favor
+  company events, so they may lean toward stories that turned out to matter. Report results
+  with and without external rows.
+- **The Jan–Oct 2024 gap is still open** for the 64 tickers not on the gap list: 142 kept rows
+  in total, a median of 2 per ticker, and none for SNDK.
+- **We didn't use the backfill's own full `news_clean.csv`.** It deleted 8,182 existing rows,
+  54 of them kept, and changed `keep` on 6 more. The spec says never drop rows.
+
+**Nexis Uni (`source = NexisUni`, added Nov 27 by MJ).** English news bulk-downloaded from
+Nexis Uni through Fordham fills thin ticker-months. The download plan, by priority, is in
+`NexisUni/plan/` next to the repo: `nexis_download_brief.md` and `nexis_download_plan.csv`.
+`nexis_import.py` turns the DOCX exports into a batch, and `add-external` merges it:
+
+```bash
+python nexis_import.py --batch nexisuni_batch02 --plan ../NexisUni/plan/nexis_download_plan.csv \
+    LIN="../NexisUni/Files (500).DOCX" DUK="../NexisUni/Files (149)"
+python news.py add-external
+```
+
+- **What's kept.** Only English news about the company passes. Press releases and
+  regulatory/government feeds are dropped, as are machine-written holdings pages (MarketBeat-type
+  sites) and other entities with the same name (Linde India, cricketer George Linde, ...). The
+  company must be in the headline or lead, the date must fall in the plan's ranges, and repeat
+  copies are skipped.
+- **What's stored.** Only the headline and a lead of at most 500 characters, never the full
+  text. The `url` is the Nexis document link.
+- **Timestamps.** The article's own date line is used, with the zone's standard offset (never
+  earlier than the truth). Date-only items and "12:00 AM" stamps count from the next trading day.
+- **Audit log.** `data/raw/external/provenance/<batch>_meta.csv` records every downloaded article
+  as kept or excluded, with the reason.
+- **Batch 1** (LIN and DUK, P1 window): 949 downloaded articles, 85 kept (59 LIN, 26 DUK).
+  Exclusions: 460 press releases or government feeds, 174 holdings-site pages, 169 duplicates
+  across the four export files, 21 not about the company in the headline or lead, 28 sport or
+  politics items, 6 other entities, and a few others. Kept LIN articles went from 11 to 26 in
+  2025, and DUK from 5 to 12.
+- **Batch 2** (SO, searches 0015–0020, 2025-Q1 to 2026-Q2 from `NexisUni/search_queue_quarterly.csv`):
+  598 downloaded articles, 217 merged, 214 kept. Exclusions: 177 press releases (Market News
+  Publishing, MENAFN and similar), 108 holdings-site pages, and 50 other entities (Norfolk Southern,
+  the UK grocer Southern Co-op). For SO, the company test also accepts the subsidiaries (Georgia
+  Power, Alabama Power, Mississippi Power, Southern Company Gas, Vogtle, ...). Most 2025–26 SO
+  months now have 10–24 kept articles; only Jan, Apr and Sep 2025 are still a few short.
+- **Query order matters in Nexis.** An `AND NOT HLEAD(...)` placed before the `DATE` range makes
+  Nexis ignore the dates. The queue puts `DATE` first.
 
 **API keys.** Copy the template and fill in your own keys. `.env` is gitignored, so never commit it.
 
