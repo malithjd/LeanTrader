@@ -109,14 +109,14 @@ def main():
     bnb = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_use_double_quant=True,
     )
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
         quantization_config=bnb,
         device_map="auto",
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
     )
     model = prepare_model_for_kbit_training(model)
 
@@ -143,8 +143,8 @@ def main():
         learning_rate=args.lr,
         logging_steps=25,
         save_strategy="epoch",
-        bf16=False,
-        fp16=True,
+        bf16=True,
+        fp16=False,
         max_length=MAX_LEN,
         gradient_checkpointing=True,
         report_to="none",
