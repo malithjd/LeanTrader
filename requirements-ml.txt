@@ -7,3 +7,9 @@ torch>=2.0
 transformers>=4.40
 # FNSPID news download (python news.py pull-fnspid)
 huggingface-hub>=2.4
+# QLoRA fine-tune (qlora_finetune.py) and adapter loading in score_news.py
+peft>=0.11
+trl>=0.12
+bitsandbytes>=0.43
+accelerate>=0.31
+datasets>=2.19
